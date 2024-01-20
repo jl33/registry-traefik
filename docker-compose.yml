@@ -1,0 +1,100 @@
+version: '3.9'
+
+x-networks: &network
+  networks:
+    - registry
+
+x-restart: &restart-always
+  restart: always
+
+services:
+  proxy:
+    image: traefik:v2.8
+    container_name: traefik
+    <<: *network
+    <<: *restart-always
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      # :ro => read only,:rw => read write
+      # docker.sock => monitor to Unix Socket events, make sure if any docker crate or remove
+      # linux use:
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+      # windows use: https://cloudcasanova.com/running-docker-in-docker-on-windows/
+      - //var/run/docker.sock:/var/run/docker.sock:ro
+      # auto use Let's Encrypt SSL
+      - ./acme.json:/acme.json:rw
+    command: 
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # use with docker 
+      - --providers.docker=true
+      # monitor service by myself
+      - --providers.docker.exposedbydefault=false
+      - --certificatesresolvers.letencrypt=true
+      - --certificatesresolvers.letencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letencrypt.acme.email=my@email.com
+      - --certificatesresolvers.letencrypt.acme.storage=acme.json
+      - --certificatesresolvers.letencrypt.acme.httpchallenge.entrypoint=web
+
+  registry:
+    image: registry:latest
+    container_name: registry
+    <<: *network
+    <<: *restart-always
+    volumes:
+      - registry-data:/var/lib/registry
+      # create registry auth(user/pwd)
+      - ./auth:/auth
+    environment:
+      - REGISTRY_AUTH=htpasswd
+      - REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm
+      - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
+    labels:
+      # monitor by traefik
+      - traefik.enable=true
+      - traefik.http.routers.registry-http.entrypoints=web
+      - traefik.http.routers.registry-https.entrypoints=websecure
+      # must set into DNS server A Record
+      - traefik.http.routers.registry-http.rule=Host(`page.the-domain-i-bought.xxx`)
+      - traefik.http.routers.registry-https.rule=Host(`page.the-domain-i-bought.xxx`)
+      - traefik.http.routers.registry-https.tls=true
+      - traefik.http.routers.routers-https.tls.certresolver=letencrypt
+      - traefik.http.routers.registry-https.service=registry
+      - traefik.http.services.registry.loadbalancer.server.port=5000
+      - traefik.docker.network=registry
+
+  ui:
+    image: quiq/docker-registry-ui:0.9.4
+    container_name: ui
+    <<: *restart-always
+    <<: *network
+    environment:
+      - TZ=Asia/Taipei
+    volumes:
+      - ./config.yml:/opt/config.yml:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.ui-http.entrypoints=web
+      - traefik.http.routers.ui-https.entrypoints=websecure
+      # must set into DNS server A Record      
+      - traefik.http.routers.ui-http.rule=Host(`the-domain-i-bought.xxx`)
+      - traefik.http.routers.ui-https.rule=Host(`the-domain-i-bought.xxx`)
+      - traefik.http.middlewares.https-only.redirectscheme.scheme=https
+      - traefik.http.,routers.ui-http.middlewares=https-only
+      - traefik.http.routers.ui-https.tls=true
+      - traefik.http.routers.ui-https.tls.certresolver=letencrypt
+      - traefik.http.routers.ui-https.service=ui
+      - traefik.http.services.ui.loadbalancer.server.port=8000
+      - traefik.docker.network=registry
+
+networks:
+  registry:
+    external: true
+
+volumes:
+  registry-data:
+    external: true
+

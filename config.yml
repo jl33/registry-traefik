@@ -1,0 +1,7 @@
+listen_addr: 0.0.0.0:8000
+base_path: /
+registry_uri: http://registry:5000
+registry_username: your-userid
+registry_password: your-password
+cache_refresh_interval: 0
+debug: false
